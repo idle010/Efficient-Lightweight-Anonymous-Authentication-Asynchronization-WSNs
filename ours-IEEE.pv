@@ -1,0 +1,173 @@
+(*--The two public channel--*)
+free c1: channel.
+free c2: channel.
+
+(*--The basic type--*)
+type key.
+type host.
+type nonce.
+type timestamp.
+
+(*--Shared key encryption--*)
+fun encrypt(bitstring,key): bitstring.
+reduc forall x: bitstring, y: key; decrypt(encrypt(x,y),y) = x.
+
+(*--Hash operation--*) 
+fun H1(bitstring): bitstring.
+fun H2(bitstring,bitstring): bitstring.
+fun H3(bitstring,bitstring,bitstring):bitstring.
+fun H4(bitstring,bitstring,bitstring,bitstring):bitstring.
+fun H5(bitstring,bitstring,bitstring,bitstring,bitstring): bitstring.
+fun H7(bitstring,bitstring,bitstring,bitstring,bitstring,bitstring,bitstring): bitstring.
+
+(*--XOR operation--*)
+fun XOR(bitstring, bitstring): bitstring.
+equation forall x: bitstring, y: bitstring; XOR(XOR(x, y), y) = x.
+
+(*--Concat operation--*)
+fun Concat(bitstring, bitstring): bitstring.
+
+(*--Check timestamp Fresh operation--*)
+fun isFresh(timestamp, bool): bool
+reduc forall T: timestamp; isFresh(T, true) = true
+otherwise forall T: timestamp; isFresh(T, false) = false.
+
+(*--Mod operation--*)
+fun Mod(bitstring, bitstring): bitstring.
+
+(*--Type convertion--*)
+fun key_to_bitstring(key): bitstring [data,typeConverter].
+fun nonce_to_bitstring(nonce): bitstring [data,typeConverter].
+fun bitstring_to_key(bitstring): key [data,typeConverter].
+fun timestamp_to_bitstring(timestamp): bitstring [data,typeConverter].
+
+(*--Secrecy assumptions
+not attacker(new Ki).
+not attacker(new Kug).--*)
+
+(*--The basic variables--*)
+const CVaule: bitstring.
+free user,GWN,SN: host. (*---three participants in our scheme--*)
+free PID: bitstring. (*---the pseudo identity shared by user and GWN--*)
+free Kgs: bitstring[private]. (*---the shared key KGWN-S between GWN and sensor node--*)
+free NSj:bitstring. (*---the serial number between GWN and sensor node--*)
+free Kug: bitstring[private]. (*--the shared one-time hash_chain between user and GWN--*)
+free Ki: bitstring[private].(*---the shared key Ki between user and GWN--*)
+
+table PsIDKey(bitstring, bitstring, bitstring, bitstring).  (*---the table user's pseudo identity/IDi/key---*)
+
+
+(*--Authentication queries--*)
+event beginUGparam(host).
+event endUGparam(host).
+event beginGUparam(host).
+event endGUparam(host).
+event beginGSparam(host).
+event endGSparam(host).
+event beginSGparam(host).
+event endSGparam(host).
+
+query x: host; inj-event(endUGparam(x)) ==> inj-event(beginUGparam(x)).
+query x: host; inj-event(endGUparam(x)) ==> inj-event(beginGUparam(x)).
+query x: host; inj-event(endGSparam(x)) ==> inj-event(beginGSparam(x)).
+query x: host; inj-event(endSGparam(x)) ==> inj-event(beginSGparam(x)).
+
+(*--Queries--*)
+free secretA, secretB, secretC, secretD: bitstring [private].
+query attacker(secretA);
+      attacker(secretB);
+      attacker(secretC);
+      attacker(secretD).
+
+(*--Role of the User with identity IDi and shared key Ki,NCi--*)
+
+let processUser(IDi: bitstring, Snj: bitstring, PWi: bitstring, bi: bitstring, Fi: bitstring, V: bitstring) =
+        
+        let xKi = XOR(Fi, H3(IDi,PWi,bi)) in
+        if xKi = Ki then
+	      let V' = H1(Mod(Concat(xKi, H3(IDi,PWi,bi)), CVaule)) in
+	      if V'=V then
+	      
+	      event beginGUparam(GWN);
+	      new rA: nonce;
+	      new T: timestamp;
+	      let CTT1 = XOR(Concat(nonce_to_bitstring(rA), Snj),H3(IDi,xKi,Kug)) in
+	      let vv1 = H7(IDi,Snj,PID,nonce_to_bitstring(rA),xKi,Kug,timestamp_to_bitstring(T)) in
+	 
+(*UO1*) out(c1, (PID, CTT1, vv1, T, isFresh(T, true)));  
+(*UR1*) in(c1, (CT3:bitstring, v4:bitstring));
+
+	      let (xsk:bitstring, xPID0:bitstring) = XOR(CT3, H4(nonce_to_bitstring(rA),PID,xKi,Kug)) in
+	      (* OK *)
+	      let v'4 = H5(Snj,IDi,xsk,nonce_to_bitstring(rA),xPID0) in
+	      if v'4 =v4 then    
+        event endUGparam(user);
+	    out(c1, encrypt(secretA, bitstring_to_key(xsk))).
+
+(*--Role of the GWN with shared key ki, NC and Kgs--*)
+let processGWN(IDi: bitstring, Snj: bitstring) =
+       
+(*GUR1*)in(c1, (gPID: bitstring, CT1: bitstring, v1: bitstring, T':timestamp, checkT:bool));
+       
+        
+        if checkT = true then
+        if gPID = PID then
+        let (rAg:bitstring,gSN:bitstring) = XOR(CT1,H3(IDi,Ki,Kug)) in
+        event beginUGparam(user);
+        let v'1 = H7(IDi,gSN,gPID,rAg,Ki,Kug,timestamp_to_bitstring(T')) in
+        if v'1=v1 && gSN = Snj then
+        
+	      new sk: bitstring;
+	      event beginSGparam(SN);
+	      let CTT2= XOR(Concat(sk,IDi),H3(Kgs,gSN,NSj)) in
+	      let vv2 = H5(IDi,Snj,sk,Kgs,NSj) in
+(*GSO1*)out(c2, (CTT2, vv2));
+(*GSR1*)in(c2, v3: bitstring);
+	      let v'3 = H4(Snj,IDi,sk,Kgs) in
+	      if v'3 = v3 then
+	      (* OK *)
+	      event endGSparam(GWN);
+	      (*let Kgs=H1(Kgs) in*)
+        out(c2, encrypt(secretC, bitstring_to_key(sk)));
+	      
+	      new PID0: bitstring;
+	      let CTT3 = XOR(Concat(sk,PID0),H4(rAg,PID,Ki,Kug)) in
+	      let vv4 = H5(Snj,IDi,sk,rAg,PID0) in
+(*GUO1*)out(c1, (CTT3,vv4));
+        event endGUparam(GWN);
+	      (* OK *)
+	     
+	      out(c1, encrypt(secretB, bitstring_to_key(sk))).
+	      
+	      
+	    
+(*--Role of the sensor node with identity Snj and shared key Kgs--*)
+let processS(IDi: bitstring, Snj:bitstring) = 
+(*SR1*) in(c2,  (CT2: bitstring,v2:bitstring));
+        event beginGSparam(GWN);
+	      let (skx:bitstring, xA2:bitstring) = XOR(CT2,H3(Kgs,Snj,NSj)) in
+	      let v'2=  H5(xA2,Snj,skx,Kgs,NSj) in
+	      if v'2=v2 then
+(*SO1*) out(c2, H4(Snj,xA2,skx,Kgs)); 
+        event endSGparam(SN);
+	      (* OK *)
+        out(c2, encrypt(secretD, bitstring_to_key(skx))).
+
+
+(*--Start process--*)
+process
+	new IDi: bitstring; 
+	new PWi: bitstring;
+	new bi: bitstring;
+	new Snj: bitstring; 
+	
+	let Fi = XOR(Ki, H3(IDi,PWi,bi)) in
+	let V = H1(Mod(Concat(Ki, H3(IDi,PWi,bi)), CVaule)) in
+	(
+          (*-- Launch an unbounded number of sessions of the user --*)
+          (!processUser(IDi,Snj,PWi,bi,Fi,V)) | 
+          (*-- Launch an unbounded number of sessions of the GWN--*)
+          (!processGWN(IDi,Snj)) |
+          (*-- Launch an unbounded number of sessions of the sensor node--*)
+          (!processS(IDi,Snj)) 
+  )
